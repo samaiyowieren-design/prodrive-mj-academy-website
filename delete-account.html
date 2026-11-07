@@ -60,8 +60,9 @@ document.getElementById('deletionForm').addEventListener('submit',async e=>{
  e.preventDefault();const form=e.currentTarget,btn=document.getElementById('send'),status=document.getElementById('status');
  if(!form.reportValidity())return;btn.disabled=true;status.hidden=false;status.textContent=L[lang].sending;
  try{
-  const body={action:'create',name:form.name.value.trim(),email:form.email.value.trim(),website:form.website.value,
-    message:'ACCOUNT DELETION REQUEST — PRODRIVE PATENTE QUIZ\n\n'+form.message.value.trim()+'\n\nSubmitted from the official deletion request page; identity verification required.'};
+  const value=id=>form.elements.namedItem(id).value;
+  const body={action:'create',name:value('name').trim(),email:value('email').trim(),website:value('website'),
+    message:'ACCOUNT DELETION REQUEST — PRODRIVE PATENTE QUIZ\n\n'+value('message').trim()+'\n\nSubmitted from the official deletion request page; identity verification required.'};
   const result=await fetch('https://sdwhproxgfejszlgawpx.supabase.co/functions/v1/website-messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const data=await result.json().catch(()=>({}));
   if(!result.ok||!data.success)throw new Error(data.error||'Failed');
