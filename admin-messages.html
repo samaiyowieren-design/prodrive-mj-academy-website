@@ -31,10 +31,11 @@ label{display:block;font-weight:600}.fine{font-size:13px;color:#c0cde0}.status{c
 <header><strong>PRODRIVE M&amp;J ACADEMY</strong><small>Private Admin Messages · CEO &amp; Founder: Mr. SAM</small></header>
 <main>
 <h1>Website Messages</h1>
-<p class="fine">Only an approved Supabase administrator can read or send replies. This page does not send email notifications yet.</p>
+<p class="fine">Only an approved Supabase administrator can read or send replies. Gmail notifications are enabled when Resend is configured.</p>
+<div id="loading" class="card"><h2>Secure connection</h2><p class="fine">Connecting your PRODRIVE administrator dashboard…</p></div>
 <div id="setup" class="card" hidden>
-<h2>One-time setup</h2>
-<p>Enter your Supabase <strong>publishable key</strong> (or legacy public <strong>anon</strong> key). This is a public browser key, NOT your service-role or secret key.</p>
+<h2>Manual connection fallback</h2>
+<p>The automatic public-key connection is currently unavailable. You can enter a Supabase <strong>publishable</strong> or public <strong>anon</strong> key instead. Never use a secret or service-role key.</p>
 <label for="pubKey">Supabase publishable/anon key</label>
 <input id="pubKey" type="password" autocomplete="off" spellcheck="false" placeholder="sb_publishable_… or eyJ…">
 <button id="saveKey" type="button">Save public key on this device</button>
@@ -47,7 +48,8 @@ label{display:block;font-weight:600}.fine{font-size:13px;color:#c0cde0}.status{c
 <label for="password">Your Supabase app password</label><input id="password" type="password" required autocomplete="current-password">
 <button id="signInBtn" type="submit">Log in to Admin Messages</button>
 </form>
-<p class="fine">Sign in using your existing Supabase app account. Other users are denied even if they know this page's address.</p>
+<p id="deepLinkNotice" class="fine" hidden>Your Gmail link will open the correct student conversation after you sign in.</p>
+<p class="fine">Sign in using your existing Supabase app account. Other users are denied access to private messages even if they know this page's address.</p>
 <button id="reconfigure" class="secondary" type="button">Change public key</button>
 </div>
 <div id="dashboard" hidden>
@@ -67,7 +69,7 @@ label{display:block;font-weight:600}.fine{font-size:13px;color:#c0cde0}.status{c
 <textarea id="adminReply" maxlength="2000" required></textarea>
 <button id="sendReply" type="submit">Send reply to this conversation</button>
 </form>
-<p class="fine">Student replies are saved on the website. Automatic Gmail notifications require a separate email service setup.</p>
+<p class="fine">Student replies are saved on the website. Email delivery is best-effort; you can check notifications in Gmail.</p>
 </section>
 </div>
 </div>
@@ -78,37 +80,60 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 const BASE='https://sdwhproxgfejszlgawpx.supabase.co';
 const ENDPOINT=BASE+'/functions/v1/website-messages';
 const PUBLIC_KEY_STORAGE='prodrive.website.admin.public_key.v1';
+const isPublicKey=value=>typeof value==='string'&&(value.startsWith('sb_publishable_')||value.startsWith('eyJ'));
 const $=id=>document.getElementById(id);
-const setup=$('setup'),signin=$('signin'),dashboard=$('dashboard');
+const setup=$('setup'),signin=$('signin'),dashboard=$('dashboard'),loading=$('loading');
 const keyInput=$('pubKey'),status=$('status');
-let supabase=null,activeId=null,tickets=[];
+let supabase=null,activeId=null,tickets=[],activePublicKey='';
 const requestedId=new URL(location.href).searchParams.get('conversation_id');
 function report(message){status.textContent=message;status.hidden=false}
 function hideReport(){status.hidden=true}
-function show(section){setup.hidden=section!=='setup';signin.hidden=section!=='signin';dashboard.hidden=section!=='dashboard';}
+function show(section){loading.hidden=section!=='loading';setup.hidden=section!=='setup';signin.hidden=section!=='signin';dashboard.hidden=section!=='dashboard';}
 function initClient(key){
+  activePublicKey=key;
   supabase=createClient(BASE,key,{
     auth:{autoRefreshToken:true,persistSession:true,detectSessionInUrl:false},
   });
 }
+async function fetchPublicKey(){
+  // This endpoint returns ONLY a Supabase public browser key; no secrets.
+  try{
+    const response=await fetch(ENDPOINT,{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({action:'public_config'}),
+    });
+    if(response.ok){
+      const data=await response.json();
+      if(isPublicKey(data.publishable_key))return data.publishable_key;
+    }
+  }catch(error){console.warn('Automatic public-key configuration unavailable',error)}
+  const saved=localStorage.getItem(PUBLIC_KEY_STORAGE);
+  return isPublicKey(saved)?saved:null;
+}
 async function initialize(){
-  const key=localStorage.getItem(PUBLIC_KEY_STORAGE);
+  hideReport();show('loading');
+  const key=await fetchPublicKey();
   if(!key){show('setup');return}
+  localStorage.setItem(PUBLIC_KEY_STORAGE,key);
   initClient(key);
-  const {data:{session}}=await supabase.auth.getSession();
-  if(session){show('dashboard');$('sessionInfo').textContent=session.user.email||'Administrator';await loadInbox();}
-  else show('signin');
+  const {data:{session},error}=await supabase.auth.getSession();
+  if(error)throw error;
+  if(session){
+    $('sessionInfo').textContent=session.user.email||'Administrator';
+    show('dashboard');await loadInbox();
+  }else show('signin');
+  $('deepLinkNotice').hidden=!requestedId;
 }
 $('saveKey').addEventListener('click',async()=>{
   const key=keyInput.value.trim();
-  if(!key || !(key.startsWith('sb_publishable_') || key.startsWith('eyJ'))){
+  if(!isPublicKey(key)){
     report('Enter a valid publishable or public anon key. Never use a service-role key.');return
   }
   localStorage.setItem(PUBLIC_KEY_STORAGE,key);keyInput.value='';hideReport();await initialize();
 });
 $('reconfigure').addEventListener('click',async()=>{
   if(supabase)await supabase.auth.signOut();
-  localStorage.removeItem(PUBLIC_KEY_STORAGE);supabase=null;show('setup');
+  localStorage.removeItem(PUBLIC_KEY_STORAGE);supabase=null;activePublicKey='';show('setup');
 });
 $('signinForm').addEventListener('submit',async(event)=>{
   event.preventDefault();hideReport();const button=$('signInBtn');button.disabled=true;
@@ -132,7 +157,7 @@ async function invoke(action,extra={}){
   if(!session)throw new Error('Please sign in again');
   const resp=await fetch(ENDPOINT,{
     method:'POST',
-    headers:{'Content-Type':'application/json','apikey':localStorage.getItem(PUBLIC_KEY_STORAGE)||'',
+    headers:{'Content-Type':'application/json','apikey':activePublicKey,
       'Authorization':'Bearer '+session.access_token},
     body:JSON.stringify({action,...extra}),
   });
@@ -146,6 +171,15 @@ async function loadInbox(){
     hideReport();
     const {conversations=[]}=await invoke('admin_list');
     tickets=conversations;
+    // Gmail links should select the referenced conversation, even if older than
+    // the newest 100 items in the inbox list. Still requires administrator auth.
+    const target=activeId||requestedId;
+    if(target&&!tickets.some(t=>t.id===target)){
+      try{
+        const result=await invoke('admin_lookup',{conversation_id:target});
+        if(result.conversation)tickets.unshift(result.conversation);
+      }catch(error){console.warn('Linked conversation unavailable',error)}
+    }
     const inbox=$('inbox');clear(inbox);
     if(!tickets.length)inbox.textContent='No student messages yet.';
     for(const conversation of tickets){
@@ -195,11 +229,11 @@ $('adminReplyForm').addEventListener('submit',async(event)=>{
   const button=$('sendReply');button.disabled=true;
   try{
     await invoke('admin_reply',{conversation_id:activeId,message});
-    $('adminReply').value='';await loadInbox();report('Your reply has been saved to the website conversation. Email delivery is not yet configured.');
+    $('adminReply').value='';await loadInbox();report('Your reply has been saved. A notification email is also attempted when Resend is available.');
   }catch(err){report('Could not send reply: '+(err?.message||'Unknown error'))}
   finally{button.disabled=false}
 });
 $('reloadInbox').addEventListener('click',loadInbox);
-initialize().catch(err=>report('Setup issue: '+(err?.message||'Unknown error')));
+initialize().catch(err=>{show('setup');report('Automatic setup is unavailable: '+(err?.message||'Please use your public key below.'))});
 </script>
 </body></html>
