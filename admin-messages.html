@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Private Messages | PRODRIVE M&amp;J ACADEMY</title>
+<style>
+:root{color-scheme:dark;--navy:#06152e;--navy2:#0b2850;--gold:#f8be38;--pale:#eaf2ff}
+*{box-sizing:border-box}body{margin:0;background:var(--navy);font:15px/1.5 system-ui,Segoe UI,sans-serif;color:var(--pale)}
+a{color:var(--gold)}header{background:var(--navy2);padding:18px max(18px,calc((100vw - 1150px)/2));border-bottom:3px solid var(--gold)}
+header strong{color:var(--gold);font-size:19px}header small{display:block;color:#cbdbf0}
+main{width:min(1150px,96vw);margin:20px auto}.card{background:#10294a;border:1px solid #896f40;border-radius:15px;padding:22px;box-shadow:0 9px 28px #0004}
+h1,h2,h3{line-height:1.2}h1{font-size:clamp(22px,4vw,32px);margin:4px 0 20px}h2{color:var(--gold);font-size:20px;margin:0 0 14px}
+button,input,textarea{font:inherit}input,textarea{background:#061b37;border:1px solid #587092;color:white;border-radius:9px;padding:12px;width:100%;margin:6px 0 14px}
+textarea{min-height:98px;resize:vertical}
+button{background:var(--gold);color:#06152e;border:0;border-radius:8px;padding:11px 16px;font-weight:700;cursor:pointer}button.secondary{background:#274362;color:#fff;border:1px solid #8da4bf}
+button:disabled{opacity:.55;cursor:wait}
+label{display:block;font-weight:600}.fine{font-size:13px;color:#c0cde0}.status{color:#fff;border-left:3px solid var(--gold);background:#133459;padding:10px 15px;margin:10px 0;border-radius:6px}
+.layout{display:grid;grid-template-columns:minmax(240px,340px) minmax(0,1fr);gap:18px}.inbox{max-height:650px;overflow:auto}
+.ticket{width:100%;text-align:left;margin:6px 0;padding:12px;background:#122c51;border:1px solid #49678a;color:#fff;display:block}
+.ticket.selected{border-color:var(--gold)}.ticket b,.ticket span{display:block}.ticket span{font-size:12px;opacity:.85;overflow-wrap:anywhere}
+.thread{min-height:160px;max-height:450px;overflow:auto;border-radius:9px;background:#07172f;padding:12px;display:flex;flex-direction:column;gap:10px}
+.bubble{max-width:88%;padding:12px;border-radius:12px;border:1px solid #456182;white-space:pre-wrap;overflow-wrap:anywhere}
+.bubble.admin{align-self:flex-end;background:#243f63;border-color:var(--gold)}.bubble.visitor{align-self:flex-start;background:#122948}
+.bubble small{display:block;color:#c0d1e7;margin-bottom:5px}.flex{display:flex;gap:9px;flex-wrap:wrap;align-items:center}.flex>*{flex:none}
+@media(max-width:700px){.layout{grid-template-columns:1fr}.card{padding:16px}header{padding:16px}}
+</style>
+</head>
+<body>
+<header><strong>PRODRIVE M&amp;J ACADEMY</strong><small>Private Admin Messages · CEO &amp; Founder: Mr. SAM</small></header>
+<main>
+<h1>Website Messages</h1>
+<p class="fine">Only an approved Supabase administrator can read or send replies. This page does not send email notifications yet.</p>
+<div id="setup" class="card" hidden>
+<h2>One-time setup</h2>
+<p>Enter your Supabase <strong>publishable key</strong> (or legacy public <strong>anon</strong> key). This is a public browser key, NOT your service-role or secret key.</p>
+<label for="pubKey">Supabase publishable/anon key</label>
+<input id="pubKey" type="password" autocomplete="off" spellcheck="false" placeholder="sb_publishable_… or eyJ…">
+<button id="saveKey" type="button">Save public key on this device</button>
+<p class="fine">Find it in Supabase → Project Settings → API Keys. Never use or paste a service_role key, secret key or account password here.</p>
+</div>
+<div id="signin" class="card" hidden>
+<h2>Secure admin login</h2>
+<form id="signinForm">
+<label for="email">Email</label><input id="email" type="email" value="samaiyowieren@gmail.com" required autocomplete="username">
+<label for="password">Your Supabase app password</label><input id="password" type="password" required autocomplete="current-password">
+<button id="signInBtn" type="submit">Log in to Admin Messages</button>
+</form>
+<p class="fine">Sign in using your existing Supabase app account. Other users are denied even if they know this page's address.</p>
+<button id="reconfigure" class="secondary" type="button">Change public key</button>
+</div>
+<div id="dashboard" hidden>
+<div class="flex" style="justify-content:space-between;margin-bottom:16px"><span id="sessionInfo" class="fine"></span><button id="signOut" class="secondary" type="button">Sign out</button></div>
+<div class="layout">
+<section class="card">
+<h2>Student Inbox</h2>
+<button id="reloadInbox" type="button" class="secondary">↻ Refresh inbox</button>
+<div id="inbox" class="inbox" aria-label="Student conversations"></div>
+</section>
+<section class="card">
+<h2 id="threadTitle">Select a conversation</h2>
+<p id="studentInfo" class="fine"></p>
+<div id="thread" class="thread" aria-live="polite"></div>
+<form id="adminReplyForm" hidden>
+<label for="adminReply">Your reply</label>
+<textarea id="adminReply" maxlength="2000" required></textarea>
+<button id="sendReply" type="submit">Send reply to this conversation</button>
+</form>
+<p class="fine">Student replies are saved on the website. Automatic Gmail notifications require a separate email service setup.</p>
+</section>
+</div>
+</div>
+<p id="status" class="status" role="status" aria-live="polite" hidden></p>
+</main>
+<script type="module">
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+const BASE='https://sdwhproxgfejszlgawpx.supabase.co';
+const ENDPOINT=BASE+'/functions/v1/website-messages';
+const PUBLIC_KEY_STORAGE='prodrive.website.admin.public_key.v1';
+const $=id=>document.getElementById(id);
+const setup=$('setup'),signin=$('signin'),dashboard=$('dashboard');
+const keyInput=$('pubKey'),status=$('status');
+let supabase=null,activeId=null,tickets=[];
+const requestedId=new URL(location.href).searchParams.get('conversation_id');
+function report(message){status.textContent=message;status.hidden=false}
+function hideReport(){status.hidden=true}
+function show(section){setup.hidden=section!=='setup';signin.hidden=section!=='signin';dashboard.hidden=section!=='dashboard';}
+function initClient(key){
+  supabase=createClient(BASE,key,{
+    auth:{autoRefreshToken:true,persistSession:true,detectSessionInUrl:false},
+  });
+}
+async function initialize(){
+  const key=localStorage.getItem(PUBLIC_KEY_STORAGE);
+  if(!key){show('setup');return}
+  initClient(key);
+  const {data:{session}}=await supabase.auth.getSession();
+  if(session){show('dashboard');$('sessionInfo').textContent=session.user.email||'Administrator';await loadInbox();}
+  else show('signin');
+}
+$('saveKey').addEventListener('click',async()=>{
+  const key=keyInput.value.trim();
+  if(!key || !(key.startsWith('sb_publishable_') || key.startsWith('eyJ'))){
+    report('Enter a valid publishable or public anon key. Never use a service-role key.');return
+  }
+  localStorage.setItem(PUBLIC_KEY_STORAGE,key);keyInput.value='';hideReport();await initialize();
+});
+$('reconfigure').addEventListener('click',async()=>{
+  if(supabase)await supabase.auth.signOut();
+  localStorage.removeItem(PUBLIC_KEY_STORAGE);supabase=null;show('setup');
+});
+$('signinForm').addEventListener('submit',async(event)=>{
+  event.preventDefault();hideReport();const button=$('signInBtn');button.disabled=true;
+  try{
+    const {data,error}=await supabase.auth.signInWithPassword({
+      email:$('email').value.trim(),password:$('password').value
+    });
+    $('password').value='';
+    if(error)throw error;
+    if(!data.session)throw new Error('No session returned');
+    show('dashboard');$('sessionInfo').textContent=data.user?.email||'Administrator';
+    await loadInbox();
+  }catch(err){report('Login failed: '+(err?.message||'Please try again'))}
+  finally{button.disabled=false}
+});
+$('signOut').addEventListener('click',async()=>{
+  await supabase?.auth.signOut();activeId=null;show('signin');hideReport();
+});
+async function invoke(action,extra={}){
+  const {data:{session}}=await supabase.auth.getSession();
+  if(!session)throw new Error('Please sign in again');
+  const resp=await fetch(ENDPOINT,{
+    method:'POST',
+    headers:{'Content-Type':'application/json','apikey':localStorage.getItem(PUBLIC_KEY_STORAGE)||'',
+      'Authorization':'Bearer '+session.access_token},
+    body:JSON.stringify({action,...extra}),
+  });
+  const data=await resp.json().catch(()=>({}));
+  if(!resp.ok)throw new Error(data.error||('HTTP '+resp.status));
+  return data;
+}
+function clear(node){while(node.firstChild)node.removeChild(node.firstChild)}
+async function loadInbox(){
+  try{
+    hideReport();
+    const {conversations=[]}=await invoke('admin_list');
+    tickets=conversations;
+    const inbox=$('inbox');clear(inbox);
+    if(!tickets.length)inbox.textContent='No student messages yet.';
+    for(const conversation of tickets){
+      const btn=document.createElement('button');
+      btn.type='button';btn.className='ticket'+(activeId===conversation.id?' selected':'');
+      const name=document.createElement('b');name.textContent=conversation.visitor_name;
+      const email=document.createElement('span');email.textContent=conversation.visitor_email;
+      const date=document.createElement('span');date.textContent=new Date(conversation.updated_at).toLocaleString();
+      btn.append(name,email,date);
+      btn.addEventListener('click',()=>openThread(conversation.id));
+      inbox.append(btn);
+    }
+    if(activeId&&tickets.some(t=>t.id===activeId))await openThread(activeId);
+    else if(requestedId && tickets.some(t=>t.id===requestedId))await openThread(requestedId);
+    else if(!activeId && tickets.length)await openThread(tickets[0].id);
+  }catch(err){report('Cannot load inbox: '+(err?.message||'Unknown error'))}
+}
+async function openThread(id){
+  activeId=id;
+  const ticket=tickets.find(t=>t.id===id);
+  $('threadTitle').textContent=ticket?ticket.visitor_name:'Conversation';
+  $('studentInfo').textContent=ticket?ticket.visitor_email:'';
+  $('adminReplyForm').hidden=false;
+  try{
+    const {messages=[]}=await invoke('admin_thread',{conversation_id:id});
+    const thread=$('thread');clear(thread);
+    for(const m of messages){
+      const box=document.createElement('div');box.className='bubble '+(m.sender==='admin'?'admin':'visitor');
+      const label=document.createElement('small');label.textContent=(m.sender==='admin'?'You':'Student')+' · '+new Date(m.created_at).toLocaleString();
+      const body=document.createElement('div');body.textContent=m.body;
+      box.append(label,body);thread.append(box);
+    }
+    if(!messages.length)thread.textContent='No messages in this conversation.';
+    thread.scrollTop=thread.scrollHeight;
+    const url=new URL(location.href);url.searchParams.set('conversation_id',id);
+    history.replaceState({},'',url);
+    for(const item of $('inbox').querySelectorAll('.ticket'))item.classList.remove('selected');
+    const position=tickets.findIndex(t=>t.id===id);
+    const button=$('inbox').querySelectorAll('.ticket')[position];
+    if(button)button.classList.add('selected');
+  }catch(err){report('Cannot open conversation: '+(err?.message||'Unknown error'))}
+}
+$('adminReplyForm').addEventListener('submit',async(event)=>{
+  event.preventDefault();
+  const message=$('adminReply').value.trim();
+  if(!activeId||!message)return;
+  const button=$('sendReply');button.disabled=true;
+  try{
+    await invoke('admin_reply',{conversation_id:activeId,message});
+    $('adminReply').value='';await loadInbox();report('Your reply has been saved to the website conversation. Email delivery is not yet configured.');
+  }catch(err){report('Could not send reply: '+(err?.message||'Unknown error'))}
+  finally{button.disabled=false}
+});
+$('reloadInbox').addEventListener('click',loadInbox);
+initialize().catch(err=>report('Setup issue: '+(err?.message||'Unknown error')));
+</script>
+</body></html>
