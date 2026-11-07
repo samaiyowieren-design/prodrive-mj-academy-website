@@ -227,6 +227,14 @@ serve(async (req) => {
       }
       const id = text(body.conversation_id, 36);
       if (!validId(id)) return reply({ error: "Invalid conversation ID" }, 400, origin);
+      if (action === "admin_lookup") {
+        const { data: conversation, error } = await db.from("website_conversations")
+          .select("id,visitor_name,visitor_email,status,created_at,updated_at")
+          .eq("id", id).maybeSingle();
+        if (error) throw new Error("Unable to load conversation");
+        if (!conversation) return reply({ error: "Conversation not found" }, 404, origin);
+        return reply({ conversation }, 200, origin);
+      }
       if (action === "admin_thread") {
         const { data, error } = await db.from("website_messages")
           .select("id,sender,body,created_at")
