@@ -60,6 +60,43 @@ async function visitor(id: string, token: string) {
   if (error || !data) return false;
   return (await hash(token)) === data.visitor_token_hash;
 }
+
+// Resend credentials are read only from Supabase Edge Function secrets.
+// This helper is intentionally best-effort: a mail outage must never lose a saved chat.
+async function sendEmail(to: string, subject: string, message: string): Promise<boolean> {
+  const apiKey = Deno.env.get("RESEND_API_KEY");
+  if (!apiKey) {
+    console.warn("RESEND_API_KEY is not configured; email notification skipped");
+    return false;
+  }
+  try {
+    const result = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        "Authorization": "Bearer " + apiKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: "PRODRIVE M&J ACADEMY <notifications@prodrivemjacademy.it>",
+        to: [to],
+        subject,
+        text: message,
+      }),
+    });
+    if (!result.ok) {
+      console.error("Resend delivery failed", result.status, (await result.text()).slice(0, 300));
+      return false;
+    }
+    return true;
+  } catch (error) {
+    console.error("Resend request failed", error);
+    return false;
+  }
+}
+const ADMIN_NOTIFICATION_EMAIL = "prodrivemjacademy@gmail.com";
+const adminConversationUrl = (id: string) =>
+  "https://www.prodrivemjacademy.it/admin-messages.html?conversation_id=" + encodeURIComponent(id);
+
 serve(async (req) => {
   const origin = req.headers.get("Origin") || "";
   if (req.method === "OPTIONS") {
@@ -111,6 +148,16 @@ serve(async (req) => {
         await db.from("website_conversations").delete().eq("id", conversation.id);
         throw new Error("Unable to save message");
       }
+      await sendEmail(
+        ADMIN_NOTIFICATION_EMAIL,
+        "New PRODRIVE website message from " + name,
+        "New student website message\n\nName: " + name
+          + "\nEmail: " + email
+          + "\n\nMessage:\n" + message
+          + "\n\nOpen your private admin conversation:\n"
+          + adminConversationUrl(conversation.id)
+          + "\n\nYou must sign in as an approved administrator to read or reply."
+      );
       return reply({
         success: true, message: "Message received",
         conversation_id: conversation.id, visitor_token: token,
@@ -133,6 +180,12 @@ serve(async (req) => {
         if (error) throw new Error("Unable to save reply");
         await db.from("website_conversations")
           .update({ updated_at: new Date().toISOString() }).eq("id", id);
+        await sendEmail(
+          ADMIN_NOTIFICATION_EMAIL,
+          "PRODRIVE student replied on your website",
+          "A student sent another message:\n\n" + message
+            + "\n\nOpen the private conversation:\n" + adminConversationUrl(id)
+        );
         return reply({ success: true }, 200, origin);
       }
       const { data, error } = await db.from("website_messages")
@@ -165,7 +218,7 @@ serve(async (req) => {
         if (!message || message.length > 2000)
           return reply({ error: "Invalid reply" }, 400, origin);
         const { data: conversation } = await db.from("website_conversations")
-          .select("id").eq("id", id).maybeSingle();
+          .select("id,visitor_name,visitor_email").eq("id", id).maybeSingle();
         if (!conversation) return reply({ error: "Conversation not found" }, 404, origin);
         const { error } = await db.from("website_messages").insert({
           conversation_id: id, sender: "admin", body: message,
@@ -173,6 +226,16 @@ serve(async (req) => {
         if (error) throw new Error("Unable to save reply");
         await db.from("website_conversations")
           .update({ updated_at: new Date().toISOString() }).eq("id", id);
+        await sendEmail(
+          conversation.visitor_email,
+          "PRODRIVE M&J ACADEMY replied to your message",
+          "Hello " + conversation.visitor_name
+            + ",\n\nPRODRIVE M&J ACADEMY has replied:\n\n"
+            + message
+            + "\n\nTo continue chatting, open https://www.prodrivemjacademy.it/#contact"
+            + " on the same browser and device where you originally sent your message."
+            + "\n\nYou can also contact PRODRIVE on WhatsApp from our website."
+        );
         return reply({ success: true }, 200, origin);
       }
     }
