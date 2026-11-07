@@ -120,6 +120,27 @@ serve(async (req) => {
     if (!body || typeof body !== "object" || Array.isArray(body))
       return reply({ error: "Invalid request" }, 400, origin);
     const action = text(body.action, 40);
+
+    // Public browser configuration: ONLY return a publishable/anon key.
+    // Never return SUPABASE_SERVICE_ROLE_KEY, SUPABASE_SECRET_KEYS or RESEND_API_KEY.
+    // This removes manual key copying when the admin dashboard is opened on a new device.
+    if (action === "public_config") {
+      let publicKey = "";
+      try {
+        const keys = Deno.env.get("SUPABASE_PUBLISHABLE_KEYS");
+        if (keys) {
+          const parsed = JSON.parse(keys);
+          if (typeof parsed?.default === "string") publicKey = parsed.default;
+        }
+      } catch (error) {
+        console.error("Invalid publishable key config", error);
+      }
+      if (!publicKey) publicKey = Deno.env.get("SUPABASE_ANON_KEY") || "";
+      if (!publicKey.startsWith("sb_publishable_") && !publicKey.startsWith("eyJ")) {
+        return reply({ error: "Public browser configuration unavailable" }, 503, origin);
+      }
+      return reply({ publishable_key: publicKey }, 200, origin);
+    }
     // Defense in depth: IP quotas plus a global ceiling.
     // Browser Origin restrictions alone are not bot/spam protection.
     const ip = (req.headers.get("x-forwarded-for") || req.headers.get("cf-connecting-ip") || "unknown")
